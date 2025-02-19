@@ -7,6 +7,9 @@ from joblib import Parallel, delayed
 import argparse
 import configparser
 import multiprocessing
+from astropy import units as un
+from scipy.spatial.transform import Rotation
+from astropy.cosmology import Planck18
 
 import py21cmfish as p21fish
 
@@ -53,6 +56,8 @@ parser.add_argument("--fix_astro_params", action='store_true', help="Fix astro p
 parser.add_argument("--test_linear", action='store_true', help="Test linearity of PS derivatives by creating lightcones on a wider grid of parameters [default = False]")
 parser.add_argument("--clobber", action='store_true', help="make new lightcones [default = False]")
 parser.add_argument("--dry_run", action='store_true', help="Just print the parameters, don't run anything [default = False]")
+parser.add_argument("--angular_lightcone", action='store_true', default=True, help="Run code with an angular lightcone instead of linear lightcone [default = True]")
+
 
 args = parser.parse_args()
 # ==============================================================================
@@ -124,8 +129,17 @@ logger.info(f'Loading from cache at {output_dir}')
 p21c.config['direc'] = output_dir
 
 # --------------------------------------
-lightcone_quantities = ("brightness_temp", 'density')
-global_quantities    = ("brightness_temp", 'density', 'xH_box')
+lightcone_quantities = ('brightness_temp',
+                        'density',
+                        'x_e_box',
+                        'Ts_box',
+                        )
+
+global_quantities    = ('brightness_temp',
+                        'density', 
+                        'xH_box',
+                        'Ts_box'
+                        )
 
 # ==================================
 # parameters
@@ -134,6 +148,13 @@ global_quantities    = ("brightness_temp", 'density', 'xH_box')
 user_params = dict(config.items('user_params'))
 user_params = {key:p21fish.read_config_params(user_params[key]) for key in user_params}
 user_params["N_THREADS"] = N_THREADS
+
+cosmo_params = p21c.CosmoParams(OMm = Planck18.Om0,
+                                OMb = Planck18.Ob0,
+                                POWER_INDEX = Planck18.meta['n'],
+                                SIGMA_8 = Planck18.meta['sigma8'],
+                                hlittle = Planck18.h,
+                                )
 
 flag_options = dict(config.items('flag_options'))
 flag_options = {key:p21fish.read_config_params(flag_options[key]) for key in flag_options}
@@ -155,12 +176,28 @@ max_redshift = float(config.get('redshifts','max'))
 HII_DIM = user_params["HII_DIM"]
 BOX_LEN = user_params["BOX_LEN"]
 
+
+# Define grid for angular lightcone
+cosmo = cosmo_params.cosmo
+box_size_radians = user_params.BOX_LEN / cosmo.comoving_distance(min_redshift).value
+lon = np.linspace(0, box_size_radians, user_params.HII_DIM*3)
+lat = np.linspace(0, box_size_radians, user_params.HII_DIM*3)[::-1]
+LON, LAT = np.meshgrid(lon, lat)
+LON = LON.flatten()
+LAT = LAT.flatten()
+offset = cosmo.comoving_distance(min_redshift).to(un.pixel,
+                                           un.pixel_scale(user_params.cell_size
+                                                          / un.pixel))
+origin = np.array([0, 0, offset.value])*offset.unit
+rot = Rotation.from_euler('Y', -np.pi/2)
+
+
 logger.info(f'Making lightcone from z={min_redshift}-{max_redshift}')
 logger.info(f'Box HII_DIM={HII_DIM}, BOX_LEN={BOX_LEN}')
 
 # Clean up types
 if save_Tb:
-    clear_kind = ['IonizedBox','TsBox']
+    clear_kind = ['IonizedBox','TsBox', 'PerturbedField',]
 else:
     clear_kind = ['IonizedBox','TsBox','BrightnessTemp', 'PerturbedField']
 
@@ -176,7 +213,7 @@ else:
 
 astro_params_run_all[f'{dict_prefix}fid'] = astro_params_fid
 
-for param in astro_params_vary:
+for param in astro_params_vary: #TODO check that this fits with standard stuff, it probably does
     p_fid = astro_params_fid[param]
 
     # Make smaller for L_X
@@ -235,11 +272,10 @@ else:
     # ==================================
     # Initial Conditions
     logger.info(f'Making initial conditions')
-
     initial_conditions = p21c.initial_conditions(user_params=user_params,
-                                                 random_seed=random_seed,
-                                                 direc=output_dir)
-
+                                                cosmo_params=cosmo_params,
+                                                random_seed=random_seed,
+                                                direc=output_dir)
     # Find ICs and perturbed fields
     PerturbedField_files = glob.glob(f'{output_dir}PerturbedField*')
     IC_files = glob.glob(f'{output_dir}InitialConditions*')
@@ -250,9 +286,32 @@ else:
     # p21c.config['write'] = False
 
     # ==================================
+    # Create angular lightconer
+    logger.info(f'Making angular lightconer')
+    ang_lcn = p21c.AngularLightconer.with_equal_cdist_slices(min_redshift=min_redshift,
+                                                            max_redshift=max_redshift,
+                                                            quantities=("brightness_temp",
+                                                                        'density',
+                                                                        'x_e_box',
+                                                                        'Ts_box',
+                                                                        'velocity_x',
+                                                                        'velocity_y',
+                                                                        'velocity_z',
+                                                                        ),
+                                                            resolution=BOX_LEN / HII_DIM,
+                                                            latitude=LAT,
+                                                            longitude=LON,
+                                                            origin=-origin,
+                                                            rotation=rot,
+                                                            get_los_velocity=True,
+                                                            regenerate=False,
+                                                            )
+    ang_lcn_files = glob.glob(f'{output_dir}lightconer*')
+
+    # ==================================
     # Run each filter
 
-    def make_lightcone(astro_params_key):
+    def make_lin_lightcone(astro_params_key):
         """
         Make lightcone for a given set of astroparams
         """
@@ -320,7 +379,85 @@ else:
 
         return
 
+    def make_ang_lightcone(astro_params_key):
+        """
+        Make lightcone for a given set of astroparams
+        """
+
+        # Save output for each parameter to a new directory
+        # if save_Tb:
+        output_dir_lc = f'{output_dir}_{astro_params_key}'
+        if not os.path.exists(output_dir_lc):
+            os.makedirs(output_dir_lc)
+
+        # put PerturbedFields in output_dir_lc
+        if len(PerturbedField_files) > 0:
+            for PF in PerturbedField_files:
+                PF_file = PF.split('/')[-1]
+                linked_file = f'{output_dir_lc}/{PF_file}'
+                if not os.path.exists(linked_file):
+                    os.symlink(PF, linked_file)
+
+        for IC in IC_files:
+            IC_file = IC.split('/')[-1]
+            linked_file = f'{output_dir_lc}/{IC_file}'
+            if not os.path.exists(linked_file):
+                os.symlink(IC, linked_file)
+
+        for ALN in ang_lcn_files:
+            ALN_file = ALN.split('/')[-1]
+            linked_file = f'{output_dir_lc}/{ALN_file}'
+            if not os.path.exists(linked_file):
+                os.symlink(ALN, linked_file)
+
+        direc = output_dir_lc
+        # else:
+        #     direc = None
+
+        # Lightcone filename
+        suffix = f'HIIDIM={HII_DIM}_BOXLEN={BOX_LEN}_fisher_{astro_params_key}'
+        lightcone_filename = f'LightCone_z{min_redshift:.1f}_{suffix}_r{random_seed}.h5'
+        logger.info(f'Will save lightcone to {lightcone_filename}')
+
+        t1 = time.time()
+
+        if not os.path.exists(f'{output_dir}{lightcone_filename}'):
+            lightcone = p21c.run_lightcone(
+                                    lightconer=ang_lcn,
+                                    redshift=min_redshift,
+                                    max_redshift=max_redshift,
+                                    global_quantities=global_quantities, 
+                                    init_box = initial_conditions,
+                                    flag_options = flag_options,
+                                    astro_params=astro_params_run_all[astro_params_key],
+                                    lightcone_quantities=lightcone_quantities,
+                                    direc=direc,
+                                    write=save_Tb,
+                                )
+            # save in main dir
+            lightcone_save = lightcone.save(fname=lightcone_filename, direc=output_dir, clobber=True)
+            logger.info(f'Saved lightcone to {lightcone_save}')
+        else:
+            logger.info(f'{lightcone_filename} already exists, skipping...')
+
+
+        # Clean up
+        for kind in clear_kind:
+            logger.info(f'Clearing cache')
+            p21c.cache_tools.clear_cache(direc=output_dir_lc, kind=kind)
+        os.system(f"rm -rf {output_dir_lc}")
+
+        t2 = time.time()
+        logger.info(f'Done with {astro_params_key}, took {(t2-t1)/3600:.2f} hours')
+
+        return
+
     t1 = time.time()
+
+    if args.angular_lightcone:
+        make_lightcone = make_ang_lightcone
+    else:
+        make_lightcone = make_lin_lightcone
 
     if num_cores == 1:
         print(astro_params_run_all.keys())
