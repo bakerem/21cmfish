@@ -2,6 +2,8 @@
 import numpy as np
 from powerbox.tools import get_power
 
+# changes: nothing substantial, just changing some of these functions to better fit 
+# the angular lightcone class
 def get_k_min_max(lightcone, n_chunks=24):
     """
     Get the minimum and maximum k in 1/Mpc to calculate powerspectra for
@@ -17,36 +19,18 @@ def get_k_min_max(lightcone, n_chunks=24):
     return k_fundamental, k_max, Nk
 
 
-def compute_power(box,
-                   length,
-                   n_psbins,
-                   log_bins=True,
-                   k_min=None,
-                   k_max=None,
-                   ignore_kperp_zero=True,
-                   ignore_kpar_zero=False,
-                   ignore_k_zero=False):
+def compute_power(
+                    box,
+                    length,
+                    n_psbins,
+                    log_bins=True,
+                    ignore_kperp_zero=True,
+                    ignore_kpar_zero=False,
+                    ignore_k_zero=False,
+                    ):
     """
-    Calculate power spectrum for a redshift chunk
-
-    TODO
-
-    Parameters
-    ----------
-    box :
-        lightcone brightness_temp chunk
-
-    length :
-        TODO
-
-    n_psbins : int
-        number of k bins
-
-    Returns
-    ----------
-        k : 1/Mpc
-        delta : mK^2
-        err_delta : mK^2
+    Convenience function for computing the power spectrum of a 3D box that wraps get_power from powerbox.  This code is borrowed from the example
+    notebook in the 21cmFAST documentation. get_power takes a 3D box and Fourier transforms it and then performs a spherical average in $k$-space. 
     """
     # Determine the weighting function required from ignoring k's.
     k_weights = np.ones(box.shape, dtype=int)
@@ -60,23 +44,15 @@ def compute_power(box,
     if ignore_k_zero:
         k_weights[n0 // 2, n0 // 2, n1 // 2] = 0
 
-    # Define k bins
-    if k_min is None and k_max is None:
-        bins = n_psbins
-    else:
-        if log_bins:
-            bins = np.logspace(np.log10(k_min), np.log10(k_max), n_psbins)
-        else:
-            bins = np.linspace(k_min, k_max, n_psbins)
-
     res = get_power(
         box,
         boxlength=length,
-        bins=bins,
+        bins=n_psbins,
         bin_ave=False,
-        get_variance=True,
+        get_variance=False,
         log_bins=log_bins,
         k_weights=k_weights,
+        # bins_upto_boxlen=True,
     )
 
     res = list(res)
@@ -87,42 +63,47 @@ def compute_power(box,
         k = (k[1:] + k[:-1]) / 2
 
     res[1] = k
-
     return res
 
 
-def powerspectra(brightness_temp, n_psbins=50, nchunks=10,
-                k_min=0.1, k_max=1.0, logk=True):
+
+def powerspectra(brightness_temp, 
+                 rs_array,
+                 box_len,
+                 hii_dim,
+                 lat,
+                 cosmo_params,
+                 n_psbins=50, 
+                 nchunks=10, 
+                 min_k=0.1, 
+                 max_k=1.0, 
+                 logk=True):
     """
-    Make power spectra for given number of equally spaced chunks
-
-    Output:
-        k : 1/Mpc
-        delta : mK^2
-        err_delta : mK^2
-
+    This function wraps compute_power to compute the power spectrum of many chunks of a single
+    lightcone and returns the dimensionless power spectrum. 
     """
     data = []
-    chunk_indices = list(range(0,brightness_temp.n_slices,round(brightness_temp.n_slices / nchunks),))
+    n_slices = rs_array.shape[0]
+    chunk_indices = list(range(0,n_slices,round(n_slices / nchunks)))
 
     if len(chunk_indices) > nchunks:
         chunk_indices = chunk_indices[:-1]
-    chunk_indices.append(brightness_temp.n_slices)
+    chunk_indices.append(n_slices-1)
 
     for i in range(nchunks):
         start = chunk_indices[i]
         end = chunk_indices[i + 1]
-        chunklen = (end - start) * brightness_temp.cell_size
-
+        cell_size = box_len / hii_dim
+        chunklen = (end - start) * cell_size
+        comoving_size = np.max(lat) * cosmo_params.comoving_distance(np.average([rs_array[start], rs_array[end-1]])).value
         power, k = compute_power(
-            brightness_temp.brightness_temp[:, :, start:end],
-            (BOX_LEN, BOX_LEN, chunklen),
+            brightness_temp[:, :, start:end],
+            (comoving_size, comoving_size, chunklen),
             n_psbins,
             log_bins=logk,
         )
-        data.append({"k": k, "delta": power * k ** 3 / (2 * np.pi ** 2)})
+        data.append({"k": k, "P": power, "delta": k**3 * power/ (2*np.pi**2), "chunk_indices": chunk_indices})
     return data
-
 
 def powerspectra_np(brightness_temp, n_psbins=50, nchunks=10, k_min=0.1, k_max=1.0, logk=True):
     """
