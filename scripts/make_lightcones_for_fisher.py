@@ -273,7 +273,7 @@ else:
     # Initial Conditions
     logger.info(f'Making initial conditions')
     initial_conditions = p21c.initial_conditions(user_params=user_params,
-                                                cosmo_params=cosmo_params,
+                                                # cosmo_params=cosmo_params,
                                                 random_seed=random_seed,
                                                 direc=output_dir)
     # Find ICs and perturbed fields
@@ -353,7 +353,7 @@ else:
                                         global_quantities=global_quantities,
                                         init_box=initial_conditions,
                                         user_params =user_params,
-                                        cosmo_params=cosmo_params,
+                                        # cosmo_params=cosmo_params,
                                         flag_options=flag_options,
                                         astro_params=astro_params_run_all[astro_params_key],
                                         random_seed=random_seed,
