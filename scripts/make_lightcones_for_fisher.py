@@ -25,7 +25,7 @@ print(f"21cmFAST version is {p21c.__version__}")
 # Took ---- Finished making lightcones, took 15.86 hours ---- for ETHOS.
 # Took 11 mins to make PS
 #
-#
+#qdel
 # python scripts/make_lightcones_for_fisher.py 21cmFAST_config_files/ETHOS.config --num_cores 2 --h_PEAK 0 --random_seed $r
 # ==============================================================================
 # ==============================================================================
@@ -179,14 +179,14 @@ BOX_LEN = user_params["BOX_LEN"]
 
 # Define grid for angular lightcone
 cosmo = cosmo_params.cosmo
-box_size_radians = user_params.BOX_LEN / cosmo.comoving_distance(min_redshift).value
-lon = np.linspace(0, box_size_radians, user_params.HII_DIM*3)
-lat = np.linspace(0, box_size_radians, user_params.HII_DIM*3)[::-1]
+box_size_radians = BOX_LEN / cosmo.comoving_distance(min_redshift).value
+lon = np.linspace(0, box_size_radians, HII_DIM*3)
+lat = np.linspace(0, box_size_radians, HII_DIM*3)[::-1]
 LON, LAT = np.meshgrid(lon, lat)
 LON = LON.flatten()
 LAT = LAT.flatten()
 offset = cosmo.comoving_distance(min_redshift).to(un.pixel,
-                                           un.pixel_scale(user_params.cell_size
+                                           un.pixel_scale((BOX_LEN / HII_DIM * un.Mpc)
                                                           / un.pixel))
 origin = np.array([0, 0, offset.value])*offset.unit
 rot = Rotation.from_euler('Y', -np.pi/2)
@@ -298,13 +298,12 @@ else:
                                                                         'velocity_y',
                                                                         'velocity_z',
                                                                         ),
-                                                            resolution=BOX_LEN / HII_DIM,
+                                                            resolution=(BOX_LEN / HII_DIM) * un.Mpc,
                                                             latitude=LAT,
                                                             longitude=LON,
                                                             origin=-origin,
                                                             rotation=rot,
                                                             get_los_velocity=True,
-                                                            regenerate=False,
                                                             )
     ang_lcn_files = glob.glob(f'{output_dir}lightconer*')
 
@@ -348,15 +347,16 @@ else:
 
         if not os.path.exists(f'{output_dir}{lightcone_filename}'):
             lightcone = p21c.run_lightcone(
-                                        redshift = min_redshift,
-                                        max_redshift = max_redshift,
+                                        redshift=min_redshift,
+                                        max_redshift=max_redshift,
                                         lightcone_quantities=lightcone_quantities,
                                         global_quantities=global_quantities,
-                                        init_box = initial_conditions,
-                                        user_params  = user_params,
-                                        flag_options = flag_options,
-                                        astro_params = astro_params_run_all[astro_params_key],
-                                        random_seed = random_seed,
+                                        init_box=initial_conditions,
+                                        user_params =user_params,
+                                        cosmo_params=cosmo_params,
+                                        flag_options=flag_options,
+                                        astro_params=astro_params_run_all[astro_params_key],
+                                        random_seed=random_seed,
                                         direc=direc,
                                         write=save_Tb
                                         )
