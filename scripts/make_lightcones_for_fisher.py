@@ -10,6 +10,7 @@ import multiprocessing
 from astropy import units as un
 from scipy.spatial.transform import Rotation
 from astropy.cosmology import Planck18
+import pickle
 
 import py21cmfish as p21fish
 
@@ -141,6 +142,7 @@ global_quantities    = ('brightness_temp',
                         'Ts_box'
                         )
 
+
 # ==================================
 # parameters
 
@@ -161,6 +163,9 @@ flag_options = {key:p21fish.read_config_params(flag_options[key]) for key in fla
 
 astro_params_fid = dict(config.items('astro_params'))
 astro_params_fid = {key:float(astro_params_fid[key]) for key in astro_params_fid}
+
+astro_params_fid["N_RSD_STEPS"] = int(astro_params_fid["N_RSD_STEPS"])
+print(type(astro_params_fid["N_RSD_STEPS"]))
 
 if fix_astro_params:
     astro_params_vary = []
@@ -306,7 +311,10 @@ else:
                                                             get_los_velocity=True,
                                                             )
     ang_lcn_files = glob.glob(f'{output_dir}lightconer*')
-
+    if not os.path.exists(f'{output_dir}lightconer.pkl'):
+        with open(f'{output_dir}lightconer.pkl', 'wb') as fp:
+            pickle.dump(ang_lcn, fp)
+            logger.info('lightconer saved successfully to file')
     # ==================================
     # Run each filter
 
@@ -427,10 +435,12 @@ else:
                                     redshift=min_redshift,
                                     max_redshift=max_redshift,
                                     global_quantities=global_quantities, 
-                                    init_box = initial_conditions,
+                                    # init_box = initial_conditions,
+                                    user_params = user_params,
                                     flag_options = flag_options,
                                     astro_params=astro_params_run_all[astro_params_key],
                                     lightcone_quantities=lightcone_quantities,
+                                    random_seed=random_seed,
                                     direc=direc,
                                     write=save_Tb,
                                 )
