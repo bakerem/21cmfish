@@ -67,7 +67,7 @@ def compute_power(
 
 
 
-def powerspectra(brightness_temp, 
+def powerspectra(field, 
                  rs_array,
                  box_len,
                  hii_dim,
@@ -97,7 +97,7 @@ def powerspectra(brightness_temp,
         chunklen = (end - start) * cell_size
         comoving_size = np.max(lat) * cosmo_params.comoving_distance(np.average([rs_array[start], rs_array[end-1]])).value
         power, k = compute_power(
-            brightness_temp[:, :, start:end],
+            field[:, :, start:end],
             (comoving_size, comoving_size, chunklen),
             n_psbins,
             log_bins=logk,
@@ -105,34 +105,16 @@ def powerspectra(brightness_temp,
         data.append({"k": k, "P": power, "delta": k**3 * power/ (2*np.pi**2), "chunk_indices": chunk_indices})
     return data
 
-def powerspectra_np(brightness_temp, n_psbins=50, nchunks=10, k_min=0.1, k_max=1.0, logk=True):
-    """
-    Make power spectra for given number of equally spaced chunks
-
-    JBM: same as powerspectra but for input in numpy format. Also outputs errors in delta
-    """
-    data = []
-
-    mapshape = brightness_temp.shape
-    chunk_indices = np.linspace(0, mapshape[-1], nchunks+1, endpoint=True,dtype=int)
-
-    for i in range(nchunks):
-        start = chunk_indices[i]
-        end = chunk_indices[i + 1]
-        chunklen = (end - start) * BOX_LEN/HII_DIM
-
-        power, k, variance = compute_power(
-            brightness_temp[:, :, start:end],
-            (BOX_LEN, BOX_LEN, chunklen),
-            n_psbins,
-            log_bins=logk,
-        )
-
-        data.append({"k": k, "delta": power * k ** 3 / (2 * np.pi ** 2), "err_delta": np.sqrt(variance) * k ** 3 / (2 * np.pi ** 2)})
-    return data
 
 
-def powerspectra_chunks(lightcone, nchunks=10,
+
+def powerspectra_chunks(field, 
+                        box_len, 
+                        hii_dim, 
+                        rs_array, 
+                        lat, 
+                        cosmo_params,
+                        nchunks=10,
                         chunk_indices=None,
                         n_psbins=50,
                         k_min=0.1,
@@ -173,24 +155,24 @@ def powerspectra_chunks(lightcone, nchunks=10,
 
     chunk_redshift = np.zeros(nchunks)
 
-    lc_redshifts = lightcone.lightcone_redshifts
-
     # Calculate PS in each redshift chunk
     for i in range(nchunks):
         if vb:
             print(f'Chunk {i}/{nchunks}...')
         start    = chunk_indices[i]
         end      = chunk_indices[i + 1]
-        chunklen = (end - start) * lightcone.cell_size
+        cell_size = box_len / hii_dim
+        chunklen = (end - start) * cell_size
 
-        chunk_redshift[i] = np.median(lc_redshifts[start:end])
+        chunk_redshift[i] = np.median(rs_array[start:end])
+        comoving_size = np.max(lat) * cosmo_params.comoving_distance(np.average([rs_array[start], rs_array[end-1]])).value
 
         if chunklen == 0:
-            print(f'Chunk size = 0 for z = {lc_redshifts[start]}-{lc_redshifts[end]}')
+            print(f'Chunk size = 0 for z = {rs_array[start]}-{rs_array[end]}')
         else:
             power, k, variance = compute_power(
-                    lightcone.brightness_temp[:, :, start:end],
-                    (lightcone.user_params.BOX_LEN, lightcone.user_params.BOX_LEN, chunklen),
+                    field[:, :, start:end],
+                    (comoving_size, comoving_size, chunklen),
                     n_psbins,
                     log_bins=logk,
                     k_min=k_min,
