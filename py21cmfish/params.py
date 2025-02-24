@@ -1,10 +1,13 @@
+from webbrowser import get
 import py21cmfast as p21c
 import os
 import numpy as np
 import glob
+import pickle
 import scipy.optimize
 
 import matplotlib.pyplot as plt
+
 
 from .power_spectra import *
 from .io import *
@@ -17,6 +20,9 @@ class Parameter(object):
                 min_redshift=5.,
                 n_chunks=24,
                 k_PEAK_order=2.,
+                mA=0.0,
+                epsilon4step=0.0,
+                halo_angles=None,
                 output_dir=base_path+'examples/data/',
                 PS_err_dir=base_path+'examples/data/21cmSense_noise/21cmSense_fid_EOS21/',
                 Park19=None,
@@ -92,6 +98,11 @@ class Parameter(object):
 
         self.lightcones = None
 
+        with open(f'{output_dir}lightconer.pkl', 'rb') as f:
+            self.ang_lcn = pickle.load(f)
+
+        self.halo_angles = halo_angles
+        self.epsilon4step = epsilon4step
         self.fid_only = fid_only
 
         # Lightcone node redshifts (for global signal etc)
@@ -231,15 +242,26 @@ class Parameter(object):
         """
 
         self.lightcones = []
+        self.signal_lightcones = []
 
         suffix = f'HIIDIM={self.HII_DIM}_BOXLEN={self.BOX_LEN}_fisher_*{regex}*{self.param}*'
         lightcone_filename = f'{self.output_dir}LightCone_z{self.min_redshift:.1f}_*{suffix}.h5'
+        fid_filename = lightcone_filename.replace(self.param,'fid')
+        if self.param == 'EPSILON4':
+            lightcone_filename = fid_filename
 
         if self.vb: print(f'    Searching for lightcones with name {lightcone_filename}')
         lc_files = glob.glob(lightcone_filename)
         fid_filename = lightcone_filename.replace(self.param,'fid')
         fid_files = glob.glob(fid_filename)
         lc_files.extend(fid_files)
+
+        if self.param == 'EPSILON4':
+            if self.mA == None:
+                return ValueError('Need to specify mA for EPSILON4')
+            self.signal_lightcones.append(np.load(f"{self.output_dir}TgammatoA_mA{self.mA:.3e}.npy"))
+        if len(self.signal_lightcones) > 1:
+            return ValueError('Too many signal lightcones')
 
         # Don't get minihalo param lightcones if it's not the minihalo param!
         if 'MINI' not in self.param:
@@ -252,11 +274,8 @@ class Parameter(object):
             print('    Loaded lightcones',f)
 
         self.k_fundamental, self.k_max, self.Nk = get_k_min_max(lightcone=self.lightcones[0], n_chunks=self.n_chunks)
-        self.lc_redshifts = self.lightcones[0].lightcone_redshifts
         np.save(self.lc_redshifts_file, self.lc_redshifts, allow_pickle=True)
-
         return
-
 
     def get_global_signal(self, save=True, plot=False):
         """
@@ -309,7 +328,6 @@ class Parameter(object):
             if self.vb: print(f'    saved GS to {self.T_file}')
 
         return
-
 
     def derivative_global_signal(self, save=True, plot=True, ax=None):
         """
@@ -368,7 +386,6 @@ class Parameter(object):
             if self.vb: print(f'    saved GS derivatives to {GS_deriv_file}')
 
         return
-
 
     def get_HERA_k_bins_for_PS(self, plot=False):
         """
@@ -430,7 +447,6 @@ class Parameter(object):
 
         return k_min, k_max, n_psbins
 
-
     def get_power_spectra(self, n_psbins=50, k_min=None, k_max=None, save=True):
         """
         Make 21cm power spectra from redshift chunk list (bin edges)
@@ -475,8 +491,10 @@ class Parameter(object):
                 key = f'h_PEAK={h_PEAK:.1f}'
             else:
                 key = self.cosmology
-
-            theta  = lc.astro_params.pystruct[self.param_21cmfast]
+            if self.param == 'EPSILON4':
+                theta = self.epsilon4step
+            else:
+                theta  = lc.astro_params.pystruct[self.param_21cmfast]
 
             if self.param == 'k_PEAK':
                 theta = 1./theta**self.k_PEAK_order
@@ -497,13 +515,33 @@ class Parameter(object):
 
             if self.vb: print(f'        - Using k:{k_min}-{k_max}')
 
-            self.PS_z_HERA, self.PS[key][f'{self.param}={theta}'] = powerspectra_chunks(lc,
-                                                                 n_psbins=n_psbins,
-                                                                 chunk_indices=chunk_indices_HERA,
-                                                                 k_min=k_min,
-                                                                 k_max=k_max,
-                                                                 remove_nans=False)
+            box_size_radians = self.BOX_LEN / self.ang_lcn.cosmo.comoving_distance(self.min_redshift).value
+            self.lat = np.linspace(0, box_size_radians, self.HII_DIM)
 
+            if self.param == "EPSILON4":
+                #TODO add in halo stuff
+                bt = np.flip(np.array(lc["brightness_temp"]).reshape((self.HII_DIM, self.HII_DIM, np.array(lc["brightness_temp"]).shape[-1])), axis=2)
+                field =  bt - theta * self.signal_lightcones[0]
+                if os.path.exists(f"{self.output_dir}halo_data/mccarthy_xis/halo_xi_mA_{self.mA:.3e}_l_max100000.npy"): #TODO fix hardcoded link
+                    print(f"halo data found for mA={self.mA:.3e}")
+                    self.halo_xi = (f"{self.output_dir}halo_data/mccarthy_xis/halo_xi_mA_{self.mA:.3e}_l_max100000.npy")
+                    get_halo_PS = True
+            else:
+                field = np.flip(np.array(lc["brightness_temp"]).reshape((self.HII_DIM, self.HII_DIM, np.array(lc["brightness_temp"]).shape[-1])), axis=2)
+                get_halo_PS = False
+            self.PS_z_HERA, self.PS[key][f'{self.param}={theta}, mA={self.mA}'] = powerspectra_chunks(field,
+                                                                self.BOX_LEN, self.HII_DIM, self.lc_redshifts, self.ang_lcn.lc_distances, self.lat, 
+                                                                self.ang_lcn.cosmo,
+                                                                n_psbins=n_psbins,
+                                                                chunk_indices=chunk_indices_HERA,
+                                                                k_min=k_min,
+                                                                k_max=k_max,
+                                                                get_halo_PS=get_halo_PS,
+                                                                halo_angles = self.halo_angles,
+                                                                halo_xi = self.halo_xi,
+                                                                epsilon4 = self.epsilon4step,
+                                                                remove_nans=False)
+                
             del lc
 
         if save:
