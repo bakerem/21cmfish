@@ -1,6 +1,8 @@
 # define functions to calculate PS, following py21cmmc
 import numpy as np
 from powerbox.tools import get_power
+import mcfit
+from scipy import interpolate
 
 # changes: nothing substantial, just changing some of these functions to better fit 
 # the angular lightcone class
@@ -111,7 +113,8 @@ def powerspectra(field,
 def powerspectra_chunks(field, 
                         box_len, 
                         hii_dim, 
-                        rs_array, 
+                        rs_array,
+                        lc_distances, 
                         lat, 
                         cosmo_params,
                         nchunks=10,
@@ -126,6 +129,10 @@ def powerspectra_chunks(field,
                         ignore_kpar_zero=False,
                         ignore_k_zero=False,
                         remove_nans=True,
+                        get_halo_PS=False,
+                        halo_angles=None,
+                        halo_xi=None,
+                        epsilon4=0.0,
                         vb=False):
 
     """
@@ -143,6 +150,7 @@ def powerspectra_chunks(field,
     # Create lightcone redshift chunks
     # If chunk indices not given, divide lightcone into nchunks equally spaced redshift chunks
     if chunk_indices is None:
+        raise ValueError("chunk_indices must be provided") #TODO implement this
         chunk_indices = list(range(0,lightcone.n_slices,round(lightcone.n_slices / nchunks),))
 
         if len(chunk_indices) > nchunks:
@@ -164,13 +172,26 @@ def powerspectra_chunks(field,
         cell_size = box_len / hii_dim
         chunklen = (end - start) * cell_size
 
+        chunk_chi = np.flipud(lc_distances)[start:end] 
         chunk_redshift[i] = np.median(rs_array[start:end])
         comoving_size = np.max(lat) * cosmo_params.comoving_distance(np.average([rs_array[start], rs_array[end-1]])).value
+        if get_halo_PS==True:
+            halo_radial_seps = chunk_chi.value * halo_angles
+            dz = box_len / hii_dim
+            Tgamma0 = 2.7255 * 1000  #mK
+            omega0 = 5.904e-6 * (2*np.pi) # eV
+            xs = np.geomspace(np.min(halo_radial_seps), np.max(halo_radial_seps), 100)
+            interpolated_xi = interpolate.interp1d(halo_radial_seps, halo_xi)
+            halo_ks, Perp_P = mcfit.w2C(xs, nu=0, lowring=True)(interpolated_xi(xs)* (Tgamma0 / omega0 * (1+chunk_redshift[i]))**2 * epsilon4, extrap=(True,"const"))
+            Perp_P *= dz 
+            halo_circ_P = np.pi * halo_ks / dz * Perp_P
+            if np.all(halo_xi == 0):
+                halo_circ_P = np.zeros_like(xs)
 
         if chunklen == 0:
             print(f'Chunk size = 0 for z = {rs_array[start]}-{rs_array[end]}')
         else:
-            power, k, variance = compute_power(
+            field_power, k, variance = compute_power(
                     field[:, :, start:end],
                     (comoving_size, comoving_size, chunklen),
                     n_psbins,
@@ -185,7 +206,12 @@ def powerspectra_chunks(field,
                 power, k, variance = power[~np.isnan(power)], k[~np.isnan(power)], variance[~np.isnan(power)]
             else:
                 variance[np.isnan(power)] = np.inf
-
-            data.append({"k": k, "delta": power * k ** 3 / (2 * np.pi ** 2), "err_delta": np.sqrt(variance) * k ** 3 / (2 * np.pi ** 2)})
+            if get_halo_PS==True:
+                power = interpolate.interp1(halo_ks, halo_circ_P, fill_value=0, bounds_error=False)(k) + field_power
+            else:
+                power = field_power
+            data.append({"k": k, "delta": power * k ** 3 / (2 * np.pi ** 2),})
+            # data.append({"k": k, "delta": power * k ** 3 / (2 * np.pi ** 2), "err_delta": np.sqrt(variance) * k ** 3 / (2 * np.pi ** 2),})
 
     return chunk_redshift, data
+
