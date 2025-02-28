@@ -18,7 +18,6 @@ def get_k_min_max(lightcone, n_chunks=24):
     Nk            = np.floor(HII_DIM/1).astype(int)
     return k_fundamental, k_max, Nk
 
-
 def compute_power(
                     box,
                     length,
@@ -64,8 +63,6 @@ def compute_power(
 
     res[1] = k
     return res
-
-
 
 def powerspectra(brightness_temp, 
                  rs_array,
@@ -131,7 +128,6 @@ def powerspectra_np(brightness_temp, n_psbins=50, nchunks=10, k_min=0.1, k_max=1
         data.append({"k": k, "delta": power * k ** 3 / (2 * np.pi ** 2), "err_delta": np.sqrt(variance) * k ** 3 / (2 * np.pi ** 2)})
     return data
 
-
 def powerspectra_chunks(lightcone, nchunks=10,
                         chunk_indices=None,
                         n_psbins=50,
@@ -157,6 +153,7 @@ def powerspectra_chunks(lightcone, nchunks=10,
     TODO this isn't using k_min, k_max...
     """
     data = []
+    # TODO rewrite this to work with angular lightcones
 
     # Create lightcone redshift chunks
     # If chunk indices not given, divide lightcone into nchunks equally spaced redshift chunks
