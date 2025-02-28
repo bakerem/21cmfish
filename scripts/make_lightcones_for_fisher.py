@@ -218,11 +218,11 @@ else:
 
 astro_params_run_all[f'{dict_prefix}fid'] = astro_params_fid
 
-for param in astro_params_vary: #TODO check that this fits with standard stuff, it probably does
+for param in astro_params_vary: 
     p_fid = astro_params_fid[param]
 
     # Make smaller for L_X
-    if param == 'L_X':
+    if 'L_X' in param:
         q = 0.001*vary_array
     else:
         q = q_scale/100*vary_array

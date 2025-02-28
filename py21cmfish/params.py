@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.append("../")
+
 from webbrowser import get
 import py21cmfast as p21c
 import os
@@ -5,7 +9,7 @@ import numpy as np
 import glob
 import pickle
 import scipy.optimize
-
+# from py21cmfish.create_conversion_lightcones import compute_crossings
 import matplotlib.pyplot as plt
 
 
@@ -94,7 +98,7 @@ class Parameter(object):
             self.fid_i = 0
 
         self.param_label = self.param
-        if self.param == "L_X" or "F" in self.param or self.param == "M_TURN":
+        if "L_X" in self.param or "F" in self.param or self.param == "M_TURN":
             self.param_label = "log10 " + self.param
 
         self.output_dir = output_dir
@@ -148,6 +152,8 @@ class Parameter(object):
             if self.vb:
                 print("    Loaded param values from", self.theta_file)
 
+
+
         # lightcone chunks for PS
         self.n_chunks = n_chunks
 
@@ -165,6 +171,14 @@ class Parameter(object):
         self.PS_file = (
             f"{self.output_dir}power_spectrum_dict_{self.param}{self.PS_suffix}.npy"
         )
+        if param=="EPSILON4":
+            self.T_file = f"{self.output_dir}global_signal_dict_{self.param}_mA={self.mA:.3e}.npy"
+            self.theta_file = f"{self.output_dir}params_dict_{self.param}_mA={self.mA:.3e}.npy"
+            self.PS_file = (
+            f"{self.output_dir}power_spectrum_dict_{self.param}_mA={self.mA:.3e}{self.PS_suffix}.npy"
+        )
+
+        
         self.PS_fid_file = f"{self.output_dir}power_spectrum_fid_21cmsense.npy"
         self.PS_z_HERA_file = f"{self.output_dir}PS_z_HERA{self.PS_suffix}.npy"
         self.PS_z_HERA = None
@@ -310,12 +324,13 @@ class Parameter(object):
             lc_files.extend(fid_files)
             if self.mA == None:
                 return ValueError("Need to specify mA for EPSILON4")
-            try:
+            if os.path.exists(f"{self.output_dir}TgammatoA_mA{self.mA:.3e}.npy"):
                 self.signal_lightcones.append(
                     np.load(f"{self.output_dir}TgammatoA_mA{self.mA:.3e}.npy")
                 )
-            except:
-                print("no signal found for this mA")
+                print(self.signal_lightcones[0].shape)
+            else:
+                print("no signal found for this mA, generating one instead")
                 self.signal_lightcones.append(0)
             if len(self.signal_lightcones) > 1:
                 return ValueError("Too many signal lightcones")
@@ -686,7 +701,7 @@ class Parameter(object):
             if self.param == "k_PEAK":
                 theta = 1.0 / theta**self.k_PEAK_order
 
-            if self.param == "L_X" or "F" in self.param or self.param == "M_TURN":
+            if "L_X" in self.param or "F" in self.param or self.param == "M_TURN":
                 theta = np.log10(theta)  # make L_X, F log10
 
             if key not in self.PS:
@@ -718,11 +733,6 @@ class Parameter(object):
             )
 
             if self.param == "EPSILON4":
-                # TODO add in halo stuff
-                if type(self.signal_lightcones[0]) != int:
-                    field = bt - theta * np.flip(self.signal_lightcones[0], axis=2)
-                else:
-                    field = bt
                 if os.path.exists(
                     f"{self.output_dir}halo_data/mccarthy_xis/halo_xi_mA_{self.mA:.3e}_l_max100000.npy"
                 ):  # TODO fix hardcoded link
@@ -732,28 +742,79 @@ class Parameter(object):
                     )
                 else:
                     halo_xi = None
+                if type(self.signal_lightcones[0]) != int:
+                    field = bt - np.sign(theta) * np.sqrt(np.abs(theta)) * np.flip(self.signal_lightcones[0], axis=2)
+                    zs, lambda_CDM_PS = (
+                            powerspectra_chunks(
+                                bt,
+                                self.BOX_LEN,
+                                self.true_HII_DIM,
+                                self.lc_redshifts,
+                                self.ang_lcn.lc_distances,
+                                self.lat,
+                                self.ang_lcn.cosmo,
+                                n_psbins=n_psbins,
+                                chunk_indices=chunk_indices_HERA,
+                                k_min=k_min,
+                                k_max=k_max,
+                                halo_angles=self.halo_angles,
+                                halo_xi=halo_xi,
+                                epsilon4=theta,
+                                remove_nans=False,
+                            )
+                        )
+                    zs, signal_PS = (
+                            powerspectra_chunks(
+                                np.flip(self.signal_lightcones[0], axis=2),
+                                self.BOX_LEN,
+                                self.true_HII_DIM,
+                                self.lc_redshifts,
+                                self.ang_lcn.lc_distances,
+                                self.lat,
+                                self.ang_lcn.cosmo,
+                                n_psbins=n_psbins,
+                                chunk_indices=chunk_indices_HERA,
+                                k_min=k_min,
+                                k_max=k_max,
+                                halo_angles=self.halo_angles,
+                                halo_xi=halo_xi,
+                                epsilon4=theta,
+                                remove_nans=False,
+                            )
+                        )
+                    total = []
+                    for i in range(len(signal_PS)):
+                        dictionary = {}
+                        dictionary["k"] = lambda_CDM_PS[i]['k']
+                        dictionary["delta"] = lambda_CDM_PS[i]["delta"] + theta * signal_PS[i]["delta"]
+                        dictionary['err_delta'] = np.sqrt(lambda_CDM_PS[i]["variance"] + theta**2 * signal_PS[i]["variance"]) * lambda_CDM_PS[i]['k']**3 / (2 * np.pi**2)
+                        total.append(dictionary)
+                    self.PS_z_HERA, self.PS[key][f"{self.param}={theta}, mA={self.mA}"] = zs, total
+
+                else:
+                    field = bt
             else:
                 field = bt
                 halo_xi = None
-            self.PS_z_HERA, self.PS[key][f"{self.param}={theta}, mA={self.mA}"] = (
-                powerspectra_chunks(
-                    field,
-                    self.BOX_LEN,
-                    self.true_HII_DIM,
-                    self.lc_redshifts,
-                    self.ang_lcn.lc_distances,
-                    self.lat,
-                    self.ang_lcn.cosmo,
-                    n_psbins=n_psbins,
-                    chunk_indices=chunk_indices_HERA,
-                    k_min=k_min,
-                    k_max=k_max,
-                    halo_angles=self.halo_angles,
-                    halo_xi=halo_xi,
-                    epsilon4=theta,
-                    remove_nans=False,
+                self.PS_z_HERA, self.PS[key][f"{self.param}={theta}, mA={self.mA}"] = (
+                    powerspectra_chunks(
+                        field,
+                        self.BOX_LEN,
+                        self.true_HII_DIM,
+                        self.lc_redshifts,
+                        self.ang_lcn.lc_distances,
+                        self.lat,
+                        self.ang_lcn.cosmo,
+                        n_psbins=n_psbins,
+                        chunk_indices=chunk_indices_HERA,
+                        k_min=k_min,
+                        k_max=k_max,
+                        halo_angles=self.halo_angles,
+                        halo_xi=halo_xi,
+                        epsilon4=theta,
+                        remove_nans=False,
+                    )
                 )
-            )
 
             del lc
 
@@ -873,6 +934,8 @@ class Parameter(object):
                 PS_err.append(PS_dict)
                 PS_sigma.append(err_mod)
                 # PS_fid.append(delta)
+
+        np.save(f"{self.output_dir}21cmSense_PS_dict.npy", PS_err, allow_pickle=True)
 
         self.PS_err = np.array(PS_err)
         self.PS_sigma = np.array(PS_sigma)
@@ -1069,11 +1132,18 @@ class Parameter(object):
             if plot:
                 ax[0].legend()
                 fig.tight_layout()
-                fig.savefig(
-                    self.output_dir
-                    + f"PS_deriv_{self.param}_{cosmo_key}{self.PS_suffix}.png",
-                    bbox_inches="tight",
-                )
+                if self.param == "EPSILON4":
+                    fig.savefig(
+                        self.output_dir
+                        + f"PS_deriv_{self.param}_{cosmo_key}{self.PS_suffix}_mA={self.mA:.3e}.png",
+                        bbox_inches="tight",
+                    )
+                else:
+                    fig.savefig(
+                        self.output_dir
+                        + f"PS_deriv_{self.param}_{cosmo_key}{self.PS_suffix}.png",
+                        bbox_inches="tight",
+                    )
 
         if save:
             PS_deriv_file = self.PS_file.replace("dict", "deriv_dict")

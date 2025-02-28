@@ -181,12 +181,10 @@ def powerspectra_chunks(
             xs = np.geomspace(np.min(halo_radial_seps), np.max(halo_radial_seps), 100)
             interpolated_xi = interpolate.interp1d(halo_radial_seps, halo_xi)
             halo_ks, Perp_P = mcfit.w2C(xs, nu=0, lowring=True)(
-                interpolated_xi(xs)
-                * (Tgamma0 / omega0 * (1 + chunk_redshift[i])) ** 2
-                * epsilon4,
+                interpolated_xi(xs),
                 extrap=(True, "const"),
             )
-            Perp_P *= dz
+            Perp_P *= dz * (Tgamma0 / omega0 * (1 + chunk_redshift[i])) ** 2 * epsilon4
             halo_circ_P = np.pi * halo_ks / dz * Perp_P
             if np.all(halo_xi == 0):
                 halo_circ_P = np.zeros_like(xs)
@@ -226,6 +224,7 @@ def powerspectra_chunks(
                     "k": k,
                     "delta": power * k**3 / (2 * np.pi**2),
                     "err_delta": np.sqrt(variance) * k**3 / (2 * np.pi**2),
+                    "variance": variance,
                 }
             )
 
