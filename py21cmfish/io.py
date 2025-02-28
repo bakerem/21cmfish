@@ -56,7 +56,9 @@ astro_params_labels = {'ALPHA_ESC': r'$\alpha_\mathrm{esc}^{II}$',
                         'ALPHA_STAR_MINI' : r'$\alpha_\star^{III}$',
                         'F_ESC7_MINI' : r'$\log_{10}f_\mathrm{esc,7}$',
                         'L_X' : r'$\log_{10}\frac{L_X/{\dot{M}_\star}}{\mathrm{erg}\,\mathrm{s}^{-1}\, M_\odot^{-1}\,\mathrm{yr}}$',
+                        'L_X_MINI': r'$\log_{10}\frac{L^{III}_X/{\dot{M}_\star}}{\mathrm{erg}\,\mathrm{s}^{-1}\, M_\odot^{-1}\,\mathrm{yr}}$',
                         'NU_X_THRESH' : r'$E_0$/eV',
                         'A_LW' : r'$A_\mathrm{LW}$',
                         'M_TURN': r'$\log_{10} (M_\mathrm{turn}/M_\odot)$',
-                         't_STAR': r'$t_\star$'}
+                         't_STAR': r'$t_\star$',
+                         'EPSILON4': r"$\epsilon^4$"}

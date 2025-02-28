@@ -200,7 +200,8 @@ def get_ellipse_params(i: int, j: int, cov: np.array):
 
         Aka the eigenvalues of the covariance matrix
         """
-        return np.sqrt(0.5*(cov[i,i] + cov[j,j]) + sign*np.sqrt(0.25*(cov[i,i] - cov[j,j])**2. + cov[i,j]*cov[j,i]))
+
+        return np.sqrt(0.5*(cov[i,i] + cov[j,j]) + sign*np.sqrt(0.25*(cov[i,i] - cov[j,j])**2. + cov[i,j]*cov[j,i]), dtype=np.float64)
 
     def angle_deg(cov):
         """
@@ -270,7 +271,6 @@ def plot_ellipse(ax, par1, par2, parameters, fiducial, cov,
     sigma_xy = cov[i,j]
 
     a, b, theta = get_ellipse_params(i, j, cov=cov)
-
     # Plot for each N sigma
     for nn, N in enumerate(N_std):
         # use defaults and then override with other kwargs
@@ -481,7 +481,6 @@ def plot_triangle(params, fiducial, cov, fig=None, ax=None,
     for ii in range(nparams):
         for jj in range(nparams):
             if ax[jj, ii] is not None:
-
                 if ii < jj:
                     plot_ellipse(ax[jj, ii], params[ii],
                                  params[jj], params, fiducial, cov,
@@ -513,7 +512,10 @@ def plot_triangle(params, fiducial, cov, fig=None, ax=None,
 
                     gauss = rescale * np.exp(-(x-fiducial[ii])**2 / (2 * sig**2)) / (sig * np.sqrt(2*np.pi))
                     ax[jj, ii].plot(x, gauss, **plot1D_kwargs)
-                    ax[jj, ii].set_title(f'{labels[ii]}$={fiducial[ii]:.2f} \pm {sig:.2f}$', fontsize=title_fontsize)
+                    if sig < 0.01:
+                        ax[jj, ii].set_title(f'{labels[ii]}$={fiducial[ii]:.1f} \pm {sig:.2e}$', fontsize=title_fontsize)
+                    else:
+                        ax[jj, ii].set_title(f'{labels[ii]}$={fiducial[ii]:.2f} \pm {sig:.2f}$', fontsize=title_fontsize)
                     if ii == nparams-1:
                         ax[jj, ii].set_xlabel(labels[ii], **xlabel_kwargs)
                 else:

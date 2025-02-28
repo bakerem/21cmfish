@@ -80,3 +80,7 @@ target/
 
 #Ipython Notebook
 .ipynb_checkpoints
+
+#Output files
+*.out
+*.o*
