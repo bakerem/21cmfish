@@ -734,16 +734,17 @@ class Parameter(object):
 
             if self.param == "EPSILON4":
                 if os.path.exists(
-                    f"{self.output_dir}halo_data/mccarthy_xis/halo_xi_mA_{self.mA:.3e}_l_max100000.npy"
+                    f"{self.output_dir}halo_data/mccarthy_xis/halo_xi_mA_{self.mA:.3e}_l_max35000.npy"
                 ):  # TODO fix hardcoded link
                     print(f"halo data found for mA={self.mA:.3e}")
                     halo_xi = np.load(
-                        f"{self.output_dir}halo_data/mccarthy_xis/halo_xi_mA_{self.mA:.3e}_l_max100000.npy"
+                        f"{self.output_dir}halo_data/mccarthy_xis/halo_xi_mA_{self.mA:.3e}_l_max35000.npy"
                     )
                 else:
                     halo_xi = None
+                    
                 if type(self.signal_lightcones[0]) != int:
-                    field = bt - np.sign(theta) * np.sqrt(np.abs(theta)) * np.flip(self.signal_lightcones[0], axis=2)
+                    # field = bt - np.sign(theta) * np.sqrt(np.abs(theta)) * np.flip(self.signal_lightcones[0], axis=2)
                     zs, lambda_CDM_PS = (
                             powerspectra_chunks(
                                 bt,
@@ -793,6 +794,25 @@ class Parameter(object):
 
                 else:
                     field = bt
+                    self.PS_z_HERA, self.PS[key][f"{self.param}={theta}, mA={self.mA}"] = (
+                        powerspectra_chunks(
+                            field,
+                            self.BOX_LEN,
+                            self.true_HII_DIM,
+                            self.lc_redshifts,
+                            self.ang_lcn.lc_distances,
+                            self.lat,
+                            self.ang_lcn.cosmo,
+                            n_psbins=n_psbins,
+                            chunk_indices=chunk_indices_HERA,
+                            k_min=k_min,
+                            k_max=k_max,
+                            halo_angles=self.halo_angles,
+                            halo_xi=halo_xi,
+                            epsilon4=theta,
+                            remove_nans=False,
+                        )
+                    )
             else:
                 field = bt
                 halo_xi = None
