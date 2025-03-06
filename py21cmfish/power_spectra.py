@@ -144,18 +144,18 @@ def powerspectra_chunks(
     # If chunk indices not given, divide into nchunks equally spaced redshift chunks
     if chunk_indices is None:
         raise ValueError("chunk_indices must be provided")  # TODO implement this
-        chunk_indices = list(
-            range(
-                0,
-                lightcone.n_slices,
-                round(lightcone.n_slices / nchunks),
-            )
-        )
+        # chunk_indices = list(
+        #     range(
+        #         0,
+        #         lightcone.n_slices,
+        #         round(lightcone.n_slices / nchunks),
+        #     )
+        # )
 
-        if len(chunk_indices) > nchunks:
-            chunk_indices = chunk_indices[:-1]
+        # if len(chunk_indices) > nchunks:
+        #     chunk_indices = chunk_indices[:-1]
 
-        chunk_indices.append(lightcone.n_slices)
+        # chunk_indices.append(lightcone.n_slices)
     else:
         nchunks = len(chunk_indices) - 1
 
@@ -182,7 +182,6 @@ def powerspectra_chunks(
             interpolated_xi = interpolate.interp1d(halo_radial_seps, halo_xi)
             halo_ks, Perp_P = mcfit.w2C(xs, nu=0, lowring=True)(
                 interpolated_xi(xs),
-                extrap=(True, "const"),
             )
             Perp_P *= dz * (Tgamma0 / omega0 * (1 + chunk_redshift[i])) ** 2 * epsilon4
             halo_circ_P = np.pi * halo_ks / dz * Perp_P
