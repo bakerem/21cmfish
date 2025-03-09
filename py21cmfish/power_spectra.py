@@ -110,6 +110,7 @@ def compute_cross_power(
     log_bins=True,
     k_min=None,
     k_max=None,
+    res_ndim=3,
     ignore_kperp_zero=True,
     ignore_kpar_zero=False,
     ignore_k_zero=False,
@@ -166,6 +167,7 @@ def compute_cross_power(
         bin_ave=False,
         get_variance=True,
         log_bins=log_bins,
+        res_ndim=res_ndim,
         k_weights=k_weights,
     )
 
@@ -179,9 +181,6 @@ def compute_cross_power(
     res[1] = k
 
     return res
-
-
-
 
 def powerspectra_chunks(
     field,
@@ -309,7 +308,6 @@ def powerspectra_chunks(
             )
 
     return chunk_redshift, data
-
 
 def cross_powerspectra_chunks(
     field,
@@ -443,4 +441,142 @@ def cross_powerspectra_chunks(
         }
     )
 
+    return chunk_redshift, data
+
+def cross_powerspectra_2d_chunks(field,
+    z1,
+    z2,
+    box_len,
+    hii_dim,
+    rs_array,
+    lc_distances,
+    lat,
+    cosmo_params,
+    nchunks=10,
+    chunk_indices=None,
+    n_psbins=50,
+    k_min=0.1,
+    k_max=1.0,
+    logk=True,
+    model_uncertainty=0.15,
+    error_on_model=True,
+    ignore_kperp_zero=True,
+    ignore_kpar_zero=False,
+    ignore_k_zero=False,
+    remove_nans=True,
+    halo_angles=None,
+    halo_xi=None,
+    epsilon4=0.0,
+    vb=False,
+):
+    """
+    Make power spectra for list of redshift chunk lightcone indices
+
+    Output:
+        k : 1/Mpc
+        delta : mK^2
+        err_delta : mK^2
+
+    TODO this isn't using k_min, k_max...
+    """
+    data = []
+    # TODO rewrite this to work with angular lightcones
+
+    # Create lightcone redshift chunks
+    # If chunk indices not given, divide into nchunks equally spaced redshift chunks
+    if chunk_indices is None:
+        raise ValueError("chunk_indices must be provided")  # TODO implement this
+        # chunk_indices = list(
+        #     range(
+        #         0,
+        #         lightcone.n_slices,
+        #         round(lightcone.n_slices / nchunks),
+        #     )
+        # )
+
+        # if len(chunk_indices) > nchunks:
+        #     chunk_indices = chunk_indices[:-1]
+
+        # chunk_indices.append(lightcone.n_slices)
+    else:
+        nchunks = len(chunk_indices) - 1
+
+    chunk_redshift = np.zeros(nchunks)
+
+    z1_chunk_index = np.argmin(np.abs(rs_array[chunk_indices] - z1)) 
+    if rs_array[z1_chunk_index] > z1:
+        z1_chunk_index -= 1
+    z2_chunk_index = np.argmin(np.abs(rs_array[chunk_indices] - z2))
+    if rs_array[z2_chunk_index] > z2:
+        z2_chunk_index -= 1
+    field1 = field[:, :, chunk_indices[z1_chunk_index]: chunk_indices[z1_chunk_index+1]]
+    field2 = field[:, :, chunk_indices[z2_chunk_index]: chunk_indices[z2_chunk_index]+(chunk_indices[z1_chunk_index+1] - chunk_indices[z1_chunk_index])]
+    # Calculate PS in each redshift chunk
+    chunk1_chi = np.median(lc_distances[chunk_indices[z1_chunk_index]:chunk_indices[z1_chunk_index+1]])
+    comoving_size1 = np.max(lat) * chunk1_chi.value
+
+    cell_size = box_len / hii_dim
+    chunklen = (chunk_indices[z1_chunk_index+1] - chunk_indices[z1_chunk_index]) * cell_size
+
+    chunk2_chi = np.median(lc_distances[chunk_indices[z2_chunk_index]: chunk_indices[z2_chunk_index]+chunk_indices[z1_chunk_index+1] - chunk_indices[z1_chunk_index]])
+    comoving_size2 = np.max(lat) * chunk2_chi.value
+
+    # if halo_xi is not None:
+    #     halo_radial_seps = chunk_chi.value * halo_angles
+    #     dz = box_len / hii_dim
+    #     Tgamma0 = 2.7255 * 1000  # mK
+    #     omega0 = 5.904e-6 * (2 * np.pi)  # eV
+    #     xs = np.geomspace(np.min(halo_radial_seps), np.max(halo_radial_seps), 100)
+    #     interpolated_xi = interpolate.interp1d(halo_radial_seps, halo_xi)
+    #     halo_ks, Perp_P = mcfit.w2C(xs, nu=0, lowring=True)(
+    #         interpolated_xi(xs),
+    #     )
+    #     Perp_P *= dz * (Tgamma0 / omega0 * (1 + chunk_redshift[i])) ** 2 * epsilon4
+    #     halo_circ_P = np.pi * halo_ks / dz * Perp_P
+    #     if np.all(halo_xi == 0):
+    #         halo_circ_P = np.zeros_like(xs)
+
+    field_power, kperp, variance, kpar = compute_cross_power(
+        field1,
+        field2,
+        (comoving_size1, comoving_size1, chunklen),
+        (comoving_size2, comoving_size2, chunklen),
+        n_psbins,
+        log_bins=logk,
+        k_min=k_min,
+        k_max=k_max,
+        res_ndim=2,
+        ignore_kperp_zero=ignore_kperp_zero,
+        ignore_kpar_zero=ignore_kpar_zero,
+        ignore_k_zero=ignore_k_zero,
+    )
+
+    if remove_nans:
+        power, kerp, kpar = power[~np.isnan(power)], kperp[~np.isnan(power)], kpar[~np.isnan(power)]
+    # else:
+    #     # variance[np.isnan(power)] = np.inf
+
+    # if halo_xi is not None:
+    #     power = (
+    #         interpolate.interp1d(
+    #             halo_ks, halo_circ_P, fill_value=0, bounds_error=False
+    #         )(k)
+    #         + field_power
+    #     )
+    # else:
+    #     power = field_power
+    # data.append({"k": k, "delta": power * k ** 3 / (2 * np.pi ** 2),})
+    kperp = np.array(kperp)
+    kpar = np.array(kpar)
+    k = np.sqrt(kpar[None, :]**2 + kperp[:, None]**2)
+    data.append(
+        {
+            "kperp": kperp,
+            "kpar": kpar,
+            "k": k,
+            "delta": field_power * k**3 / (2 * np.pi**2),
+            "err_delta": np.sqrt(variance) * k**3 / (2 * np.pi**2),
+            "variance": variance,
+        }
+    )
     return chunk_redshift, data
