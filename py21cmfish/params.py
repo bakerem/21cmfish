@@ -31,6 +31,7 @@ class Parameter(object):
         k_PEAK_order=2.0,
         mA=0.0,
         epsilon4step=0.0,
+        crosszs = (6,20),
         halo_angles=None,
         output_dir=base_path + "examples/data/",
         PS_err_dir=base_path + "examples/data/21cmSense_noise/21cmSense_fid_EOS21/",
@@ -120,6 +121,8 @@ class Parameter(object):
         self.mA = mA
         self.h = self.ang_lcn.cosmo.H(0).value / 100
 
+        self.crossz1, self.crossz2 = crosszs
+
         self.fid_only = fid_only
 
         # Lightcone node redshifts (for global signal etc)
@@ -139,14 +142,21 @@ class Parameter(object):
                 print("    Loaded redshifts")
 
         self.T = None
-        self.T_file = f"{self.output_dir}global_signal_dict_{self.param}.npy"
+        if param == "EPSILON4":
+            self.T_file = f"{self.output_dir}global_signal_dict_{self.param}_mA={self.mA:.3e}.npy"
+        else:
+            self.T_file = f"{self.output_dir}global_signal_dict_{self.param}.npy"
         if os.path.exists(self.T_file) and clobber is False:
             self.T = np.load(self.T_file, allow_pickle=True).item()
             if self.vb:
                 print("    Loaded T(z) from", self.T_file)
 
         self.theta_params = None
-        self.theta_file = f"{self.output_dir}params_dict_{self.param}.npy"
+        if param == "EPSILON4":
+            self.theta_file = f"{self.output_dir}params_dict_{self.param}_mA={self.mA:.3e}.npy"
+        else:
+            self.theta_file = f"{self.output_dir}params_dict_{self.param}.npy"
+
         if os.path.exists(self.theta_file) and clobber is False:
             self.theta_params = np.load(self.theta_file, allow_pickle=True).item()
             if self.vb:
@@ -228,16 +238,17 @@ class Parameter(object):
             # Make power spectrum, load PS noise and make derivatives
             if self.k_HERA:
                 k_min, k_max, n_psbins = self.get_HERA_k_bins_for_PS(plot=True)
-                self.get_power_spectra(k_min=k_min, k_max=k_max, n_psbins=n_psbins)
+                # self.get_power_spectra(k_min=k_min, k_max=k_max, n_psbins=n_psbins)
+                self.get_cross_power_spectra(k_min=k_min, k_max=k_max, n_psbins=n_psbins)
             else:
                 self.get_power_spectra()
 
-            self.make_PS_fid_HERA_grid()
-            self.derivative_power_spectrum()
+            self.make_cross_PS_fid_HERA_grid()
+            self.derivative_cross_power_spectrum()
 
         else:
             print("    Loading global signal and power spectra from saved files")
-
+            
             # PS
             if os.path.exists(self.PS_file):
                 self.PS = np.load(self.PS_file, allow_pickle=True).item()
@@ -262,7 +273,7 @@ class Parameter(object):
                         self.PS_z_HERA_file,
                         "shape=",
                         self.PS_z_HERA.shape,
-                    )
+                    )                
 
             # Derivatives
             if os.path.exists(self.T_file.replace("dict", "deriv_dict")):
@@ -274,6 +285,11 @@ class Parameter(object):
                         "    Loaded GS derivatives from",
                         self.T_file.replace("dict", "deriv_dict"),
                     )
+            else:
+                if self.vb:
+                    "    Could not load GS derivatives, remaking them"
+                self.derivative_global_signal()
+
 
             if os.path.exists(self.PS_file.replace("dict", "deriv_dict")):
                 self.deriv_PS = np.load(
@@ -287,6 +303,10 @@ class Parameter(object):
                         "shape=",
                         self.deriv_PS[keys[0]].shape,
                     )
+            else:
+                if self.vb:
+                    "    Could not load PS derivatives, remaking them"
+                self.derivative_power_spectrum()
 
         # Get fiducial Poisson noise
         try:
@@ -849,6 +869,206 @@ class Parameter(object):
 
         return
 
+    def get_cross_power_spectra(self, n_psbins=50, k_min=None, k_max=None, save=True):
+        """
+        Make 21cm power cross spectra from redshift chunk list (bin edges)
+
+        Parameters
+        ----------
+        n_psbins : int
+            Number of k bins
+        k_min : float, optional
+            Minimum k value for PS [in 1/Mpc]
+        k_max : float, optional
+            Maximum k value for PS [in 1/Mpc]
+        save : bool
+            Save PS to file?
+        """
+
+        if self.Park19:
+            # chunk_z_list_HERA = [27.408, 20.306, 16.0448, 13.204, 11.17485714,
+            #                         9.653, 8.46933333, 7.5224, 6.74763636, 6.102,
+            #                         5.55569231, 5.08742857]
+            chunk_z_list_HERA = [
+                27.15742,
+                22.97586,
+                19.66073,
+                16.98822,
+                14.80234,
+                12.99172,
+                11.4751,
+                10.19206,
+                9.09696,
+                8.15475,
+                7.33818,
+                6.62582,
+                6.0006,
+            ]
+        else:
+            chunk_z_list_HERA = [
+                27.4,
+                23.4828,
+                20.5152,
+                18.1892,
+                16.3171,
+                14.7778,
+                13.4898,
+                12.3962,
+                11.4561,
+                10.6393,
+                9.92308,
+                9.28986,
+                8.72603,
+                8.22078,
+                7.76543,
+                7.35294,
+                6.97753,
+                6.63441,
+                6.31959,
+                6.0297,
+                5.7619,
+                5.51376,
+                5.28319,
+                5.06838,
+            ]  # , 4.86777, 4.68]
+
+        if self.lightcones is None:
+            self.get_lightcones()
+        chunk_indices_HERA = [
+            np.argmin(np.abs(self.lc_redshifts - z_HERA))
+            for z_HERA in chunk_z_list_HERA
+        ][::-1]
+
+        if self.vb:
+            print(
+                f"    Making powerspectra in {len(chunk_z_list_HERA)} redshift chunks and {n_psbins-1} k bins"
+            )
+
+        self.PS = {}
+        use_ETHOS = False  # TODO fix this #self.lightcones[0].flag_options.pystruct['USE_ETHOS']
+
+        for lc in self.lightcones:
+            if use_ETHOS:
+                h_PEAK = np.round(lc.astro_params.pystruct["h_PEAK"], 1)
+                key = f"h_PEAK={h_PEAK:.1f}"
+            else:
+                key = self.cosmology
+            if self.param == "EPSILON4":
+                if lc is self.lightcones[0]:
+                    theta = self.epsilon4step
+                elif lc is self.lightcones[1]:
+                    theta = -self.epsilon4step
+                else:
+                    theta = 0
+            else:
+                theta = lc.astro_params.pystruct[self.param_21cmfast]
+
+            if self.param == "k_PEAK":
+                theta = 1.0 / theta**self.k_PEAK_order
+
+            if "L_X" in self.param or "F" in self.param or self.param == "M_TURN":
+                theta = np.log10(theta)  # make L_X, F log10
+
+            if key not in self.PS:
+                self.PS[key] = {}  ##### TODO load PS nicely
+
+            if self.vb:
+                print(f"    Getting PS for {key}, {self.param}={theta}")
+
+            # Make PS
+            if k_min is None:
+                k_min = self.k_fundamental
+            if k_max is None:
+                k_max = self.k_max
+
+            if self.vb:
+                print(f"        - Using k:{k_min}-{k_max}")
+
+            box_size_radians = (
+                self.BOX_LEN
+                / self.ang_lcn.cosmo.comoving_distance(self.min_redshift).value
+            )
+            self.lat = np.linspace(0, box_size_radians, self.true_HII_DIM)
+            bt = np.array(lc.lightcones["brightness_temp"]).reshape(
+                (
+                    self.true_HII_DIM,
+                    self.true_HII_DIM,
+                    np.array(lc.lightcones["brightness_temp"]).shape[-1],
+                )
+            )
+
+            if self.param == "EPSILON4":
+                if os.path.exists(
+                    f"{self.output_dir}halo_data/mccarthy_xis/halo_xi_mA_{self.mA:.3e}_l_max35000.npy"
+                ):  # TODO fix hardcoded link
+                    print(f"halo data found for mA={self.mA:.3e}")
+                    halo_xi = np.load(
+                        f"{self.output_dir}halo_data/mccarthy_xis/halo_xi_mA_{self.mA:.3e}_l_max35000.npy"
+                    )
+                else:
+                    halo_xi = None
+                    
+                field = bt - np.sign(theta) * np.sqrt(np.abs(theta)) * np.flip(self.signal_lightcones[0], axis=2)
+                self.PS_z_HERA, self.PS[key][f"{self.param}={theta}, mA={self.mA}"] = (
+                        cross_powerspectra_chunks(
+                            field,
+                            self.crossz1,
+                            self.crossz2,
+                            self.BOX_LEN,
+                            self.true_HII_DIM,
+                            self.lc_redshifts,
+                            self.ang_lcn.lc_distances,
+                            self.lat,
+                            self.ang_lcn.cosmo,
+                            n_psbins=n_psbins,
+                            chunk_indices=chunk_indices_HERA,
+                            k_min=k_min,
+                            k_max=k_max,
+                            halo_angles=self.halo_angles,
+                            halo_xi=halo_xi,
+                            epsilon4=theta,
+                            remove_nans=False,
+                        )
+                    )
+                         
+            else:
+                field = bt
+                halo_xi = None
+                self.PS_z_HERA, self.PS[key][f"{self.param}={theta}, mA={self.mA}"] = (
+                    cross_powerspectra_chunks(
+                        field,
+                        self.crossz1,
+                        self.crossz2,
+                        self.BOX_LEN,
+                        self.true_HII_DIM,
+                        self.lc_redshifts,
+                        self.ang_lcn.lc_distances,
+                        self.lat,
+                        self.ang_lcn.cosmo,
+                        n_psbins=n_psbins,
+                        chunk_indices=chunk_indices_HERA,
+                        k_min=k_min,
+                        k_max=k_max,
+                        halo_angles=self.halo_angles,
+                        halo_xi=halo_xi,
+                        epsilon4=theta,
+                        remove_nans=False,
+                    )
+                )
+
+            del lc
+
+        if save:
+            np.save(self.PS_file, self.PS, allow_pickle=True)
+            if self.vb:
+                print(f"    saved PS to {self.PS_file}")
+
+            np.save(self.PS_z_HERA_file, self.PS_z_HERA, allow_pickle=True)
+            if self.vb:
+                print(f"    saved PS_z_HERA to {self.PS_z_HERA_file}")
+
+        return
+
     def load_21cmsense(self, Park19=None):
         """
         Load 21cmsense errors from a given directory and save arrays to self
@@ -908,15 +1128,21 @@ class Parameter(object):
 
         else:
             err_files = sorted(
-                glob.glob(self.PS_err_dir + f"Errlist_SplitCore_HERA350*")
+                glob.glob(self.PS_err_dir + f"Errlist_*")
             )
             frequencies = [f.split("_")[-1].split(".txt")[0] for f in err_files][
                 ::-1
             ]  # sort in decreasing frequency, increasing redshift
-            k = np.genfromtxt(
-                self.PS_err_dir
-                + f"klist_SplitCore_HERA350.drift_mod_{frequencies[-1]}.txt"
-            )
+            try:
+                k = np.genfromtxt(
+                    self.PS_err_dir
+                    + f"klist_SplitCore_HERA350.drift_mod_{frequencies[-1]}.txt"
+                )
+            except:
+                k = np.genfromtxt(
+                    self.PS_err_dir
+                    + f"klist_ska_aaast_mod_{frequencies[-1]}.txt"
+                )
             for freq in frequencies:
                 try:
                     delta = np.genfromtxt(
@@ -927,10 +1153,16 @@ class Parameter(object):
                     delta = np.zeros_like(k)
                     if self.vb:
                         print("    No delta file found, setting = nan")
-
-                err_mod = np.genfromtxt(
-                    self.PS_err_dir + f"Errlist_SplitCore_HERA350.drift_mod_{freq}.txt"
-                )
+                try:
+                    err_mod = np.genfromtxt(
+                        self.PS_err_dir + f"Errlist_SplitCore_HERA350.drift_mod_{freq}.txt"
+                    )
+                except:
+                    err_mod = np.genfromtxt(
+                        self.PS_err_dir + f"Errlist_ska_aaast_mod_{freq}.txt"
+                    )
+                    if self.vb:
+                        print("    Using SKA error data")
                 try:
                     err_opt = np.genfromtxt(
                         self.PS_err_dir
@@ -989,6 +1221,31 @@ class Parameter(object):
 
         return
 
+    def make_cross_PS_fid_HERA_grid(self):
+        """
+        Make fiducial PS in 21cmsense k bins [Mpc^-1]
+        """
+        if self.fid_only:
+            fid_key = list(self.PS[self.cosmology].keys())[0]
+        else:
+            fid_key = sorted(list(self.PS[self.cosmology].keys()))[self.fid_i]
+        print(f"    Fiducial: {fid_key}")
+
+        # Make fiducial PS in 21cmsense k bins [Mpc^-1]
+        ps_fid_all = self.PS[self.cosmology][fid_key]
+        self.PS_fid = np.empty((len(self.PS_z_HERA), len(self.PS_err[0]["k"])))
+        k = ps_fid_all[0]["k"]
+        PS_interp = np.interp(
+            self.PS_err[0]["k"] * self.h, k, ps_fid_all[0]["delta"]
+        )
+        self.PS_fid[0] = PS_interp
+
+        np.save(self.PS_fid_file, self.PS_fid, allow_pickle=True)
+        if self.vb:
+            print(f"    saved fiducial PS to {self.PS_fid_file}")
+
+        return
+
     def load_Poisson_noise(self):
         """
         Load Poisson noise from PS
@@ -1004,22 +1261,37 @@ class Parameter(object):
         print(f"    Fiducial: {fid_key}")
 
         ps_fid_all = self.PS[self.cosmology][fid_key]
-        for i in range(len(self.PS_z_HERA)):
+        # if len(self.PS_z_HERA) > 0:
+        #     for i in range(len(self.PS_z_HERA)):
+        #         PS_err_Poisson_sim = ps_fid_all[i]["err_delta"]
 
-            PS_err_Poisson_sim = ps_fid_all[i]["err_delta"]
+        #         k_sim = ps_fid_all[i]["k"]
+        #         k_err = self.PS_err[i]["k"] * self.h  # h Mpc^-1 --> Mpc^-1
 
-            k_sim = ps_fid_all[i]["k"]
-            k_err = self.PS_err[i]["k"] * self.h  # h Mpc^-1 --> Mpc^-1
+        #         if self.k_HERA is False:  # this is a bad idea
+        #             # interpolate onto 21cmsense k values
+        #             PS_err_Poisson.append(np.interp(k_err, k_sim, PS_err_Poisson_sim))
 
-            if self.k_HERA is False:  # this is a bad idea
-                # interpolate onto 21cmsense k values
-                PS_err_Poisson.append(np.interp(k_err, k_sim, PS_err_Poisson_sim))
+        #         else:  # this is right
+        #             assert (
+        #                 np.abs(k_sim - k_err) < 1e-5
+        #             ).all(), "ERROR: simulated k bins do not match HERA k bins"
+        #             PS_err_Poisson.append(PS_err_Poisson_sim)
+        # else:
+        PS_err_Poisson_sim = ps_fid_all[0]["err_delta"]
 
-            else:  # this is right
-                assert (
-                    np.abs(k_sim - k_err) < 1e-5
-                ).all(), "ERROR: simulated k bins do not match HERA k bins"
-                PS_err_Poisson.append(PS_err_Poisson_sim)
+        k_sim = ps_fid_all[0]["k"]
+        k_err = self.PS_err[0]["k"] * self.h  # h Mpc^-1 --> Mpc^-1
+
+        if self.k_HERA is False:  # this is a bad idea
+            # interpolate onto 21cmsense k values
+            PS_err_Poisson.append(np.interp(k_err, k_sim, PS_err_Poisson_sim))
+        else:  # this is right
+            assert (
+                np.abs(k_sim - k_err) < 1e-5
+            ).all(), "ERROR: simulated k bins do not match HERA k bins"
+            PS_err_Poisson.append(PS_err_Poisson_sim)
+
 
         self.PS_err_Poisson = np.array(PS_err_Poisson)
 
@@ -1164,6 +1436,146 @@ class Parameter(object):
                         + f"PS_deriv_{self.param}_{cosmo_key}{self.PS_suffix}.png",
                         bbox_inches="tight",
                     )
+
+        if save:
+            PS_deriv_file = self.PS_file.replace("dict", "deriv_dict")
+            np.save(PS_deriv_file, self.deriv_PS, allow_pickle=True)
+            if self.vb:
+                print(f"    saved PS derivatives to {PS_deriv_file}")
+
+        return
+    
+    def derivative_cross_power_spectrum(self, save=True, plot=True, ax=None):
+        """
+        Calculate power spectrum derivatives
+
+        Parameters
+        ----------
+        save : bool, optional
+            Save PS derivative to file?
+
+        plot : bool, optional
+            Plot PS derivatives as a function of redshift
+
+        ax : Union[None, plt.Axes]
+            Matplotlib axes to plot on. If `None`, make a new figure
+            with subplots
+        """
+
+        self.deriv_PS = {}
+
+        for cosmo_key in sorted(self.T):
+
+            if "h_PEAK=0.0" in cosmo_key:
+                ls = "dashed"
+            else:
+                ls = "solid"
+
+            if plot:
+                fig, ax = plt.subplots(
+                    sharex=True,
+                    sharey=False,
+                    figsize=(9, 9),
+                )
+                fig.suptitle(cosmo_key + "  -  " + self.param)
+
+            self.deriv_PS[cosmo_key] = np.zeros(
+                (len(self.PS_err), len(self.PS_err[0]["k"]))
+            )
+            # Get PS for each theta
+            theta = []
+            PS = []
+            for theta_key in self.PS[cosmo_key]:
+                theta.append(float(theta_key.split("=")[1].split(",")[0]))
+                PS.append(self.PS[cosmo_key][theta_key][0]["delta"])
+
+            # # Add fiducial
+            # if self.param != 'k_PEAK':
+            #     theta_fid = self.theta_params[cosmo_key][1]
+            # else:
+            #     theta_fid = self.theta_params[cosmo_key][0]
+            # theta.append(theta_fid)
+            # PS.append(self.PS[cosmo_key][f'{self.param}={theta_fid}'][i]['delta'])
+
+            k = self.PS[cosmo_key][theta_key][0]["k"]
+            # Sort PS in order of increasing theta
+            # [x-h, x, x+h] for two-sided Derivatives (all astro params) where x is fid
+            # [x, x+h1, x+h2] for asymmetric derivatives (1/kpeak)
+            theta = np.array(theta)
+            PS = np.array(PS)[np.argsort(theta)]
+            theta = theta[np.argsort(theta)]
+
+            assert theta[-1] > theta[0], "thetas are not ordered correctly"
+
+            print("theta =", theta)
+
+            # Calculate derivative
+            if self.param == "k_PEAK":
+                deriv = np.zeros((len(theta), len(PS[0])))
+                for j in range(len(theta)):
+                    if j > 0:
+                        deriv[j] = (PS[j] - PS[0]) / (theta[j] - theta[0])
+                        if plot:
+                            ax.semilogx(
+                                k,
+                                deriv[j],
+                                lw=1,
+                                ls=ls,
+                                label="1/k_PEAK^%.1f < %.1e"
+                                % (self.k_PEAK_order, theta[j]),
+                            )
+            else:
+                deriv = np.gradient(PS, theta, axis=0)
+                assert (
+                    deriv[1][~np.isnan(deriv[1])]
+                    == (PS[2][~np.isnan(deriv[1])] - PS[0][~np.isnan(deriv[1])])
+                    / (theta[2] - theta[0])
+                ).all(), "two-sided derivative is wrong"
+
+            if self.k_HERA:
+                self.deriv_PS[cosmo_key][0] = deriv[1]
+            else:
+                # interpolate onto k for 21cmsense in 1/Mpc [21cmsense output is in h/Mpc]
+                self.deriv_PS[cosmo_key][0] = np.interp(
+                    self.PS_err[0]["k"] * self.h, k, deriv[1]
+                )
+
+            if plot:
+                try:
+                    ax.set_title(f"z={self.PS_z_HERA[0]:.1f}")
+                except:
+                    pass
+
+                if self.param != "k_PEAK":
+                    ax.semilogx(k, deriv.T, alpha=0.7)
+
+                ax.scatter(
+                    self.PS_err[0]["k"] * self.h,
+                    self.deriv_PS[cosmo_key][0],
+                    c="k",
+                    s=5,
+                    ls="dashed",
+                    zorder=100,
+                )
+
+                ax.set_xlabel(r"k [Mpc$^{-1}$]")
+                ax.set_ylabel(r"$\partial \Delta^2_{21} (mK^2)/\partial \theta$")
+
+        if plot:
+            ax.legend()
+            fig.tight_layout()
+            if self.param == "EPSILON4":
+                fig.savefig(
+                    self.output_dir
+                    + f"PS_deriv_{self.param}_{cosmo_key}{self.PS_suffix}_mA={self.mA:.3e}.png",
+                    bbox_inches="tight",
+                )
+            else:
+                fig.savefig(
+                    self.output_dir
+                    + f"PS_deriv_{self.param}_{cosmo_key}{self.PS_suffix}.png",
+                    bbox_inches="tight",
+                )
 
         if save:
             PS_deriv_file = self.PS_file.replace("dict", "deriv_dict")

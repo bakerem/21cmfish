@@ -3,6 +3,9 @@ from matplotlib.patches import Ellipse
 import matplotlib.pyplot as plt
 
 
+z6errs = np.loadtxt("/projectnb/darkcosmo/dark_photon_project/21cmfish/examples/data/21cmSense_noise/21cmSense_fid_EOS21/P21model_SplitCore_HERA350.drift_mod_0.206.txt")
+z20errs = np.loadtxt("/projectnb/darkcosmo/dark_photon_project/21cmfish/examples/data/21cmSense_noise/21cmSense_fid_EOS21/P21model_SplitCore_HERA350.drift_mod_0.070.txt")
+
 def make_fisher_matrix(params_dict, fisher_params, hpeak=0.0, obs='GS',
                         sigma=None, sigma_mod_frac=0.,
                         k_min=None, k_max=None,
@@ -75,6 +78,27 @@ def make_fisher_matrix(params_dict, fisher_params, hpeak=0.0, obs='GS',
             if axis_PS is not None:
                 Fij_matrix = np.zeros((PS0.shape[axis_PS-1], len(fisher_params), len(fisher_params)))
 
+        elif i == 0 and obs == 'Cross PS':
+            k_where = np.arange(len(params_dict[p1].PS_err[0]['k']))
+            if k_min is not None and k_max is not None:  # k range in 1/Mpc
+                k_where  = np.where((params_dict[p1].PS_err[0]['k'] <= k_max) & (params_dict[p1].PS_err[0]['k'] >= k_min))[0]
+
+            # Model error (e.g. 20%)
+            sigma_mod = sigma_mod_frac * params_dict[p1].PS_fid[0][k_where]
+            # if cosmo_key is None:
+            # cosmo_key = params_dict[p1].deriv_PS.keys()[0]
+            PS0 = params_dict[p1].deriv_PS[cosmo_key][0][k_where]
+
+            # Poisson error
+            if add_sigma_poisson:
+                sigma_poisson = params_dict[p1].PS_err_Poisson[0][k_where]
+            else:
+                sigma_poisson = 0.
+
+            # Fisher as a function of redshift or k?
+            if axis_PS is not None:
+                Fij_matrix = np.zeros((PS0.shape[axis_PS-1], len(fisher_params), len(fisher_params)))
+
         for j,p2 in enumerate(fisher_params):
             if obs == 'GS':
                 if i == 0 and j == 0:
@@ -100,7 +124,24 @@ def make_fisher_matrix(params_dict, fisher_params, hpeak=0.0, obs='GS',
                     Fij_matrix[i,j] = Fij(params_dict[p1].deriv_PS[cosmo_key][z_where][:,k_where],
                                           params_dict[p2].deriv_PS[cosmo_key][z_where][:,k_where],
                                           sigma_obs=sigma_PS, sigma_mod=sigma_mod, sigma_poisson=sigma_poisson, axis=axis_PS)
+            elif obs == "Cross PS":
+                if sigma is None:
+                    sigma_PS = np.sqrt(z6errs[k_where]**2 + z20errs[k_where]**2)
+                else:
+                    sigma_PS = sigma
+                if i==0 and j==0:
+                    print('PS shape:',params_dict[p1].deriv_PS[cosmo_key][0][k_where].shape)
 
+                if axis_PS is not None:
+                    Fij_matrix[:,i,j] = Fij(params_dict[p1].deriv_PS[cosmo_key][0][k_where],
+                                          params_dict[p2].deriv_PS[cosmo_key][0][k_where],
+                                          sigma_obs=sigma_PS, sigma_mod=sigma_mod, sigma_poisson=sigma_poisson, axis=axis_PS)
+                else:
+                    Fij_matrix[i,j] = Fij(params_dict[p1].deriv_PS[cosmo_key][0][k_where],
+                                          params_dict[p2].deriv_PS[cosmo_key][0][k_where],
+                                          sigma_obs=sigma_PS, sigma_mod=sigma_mod, sigma_poisson=sigma_poisson, axis=axis_PS)
+
+    # print(Fij_matrix)
     Finv = np.linalg.inv(Fij_matrix)
     return Fij_matrix, Finv
 
